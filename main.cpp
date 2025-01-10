@@ -9,16 +9,10 @@
 
 #include "Luau/Common.h"
 #include "Luau/Compiler.h"
-
 #include "Luau/Ast.h"
 #include "Luau/Parser.h"
 #include "Luau/ParseOptions.h"
 #include "Luau/Allocator.h"
-
-#include "Luau/Parser.h"
-#include "Luau/ParseOptions.h"
-#include "Luau/Ast.h"
-#include "Luau/Common.h"
 #include "Luau/Module.h"
 
 struct GlobalOptions {
