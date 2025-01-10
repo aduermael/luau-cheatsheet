@@ -10,6 +10,17 @@
 #include "Luau/Common.h"
 #include "Luau/Compiler.h"
 
+#include "Luau/Ast.h"
+#include "Luau/Parser.h"
+#include "Luau/ParseOptions.h"
+#include "Luau/Allocator.h"
+
+#include "Luau/Parser.h"
+#include "Luau/ParseOptions.h"
+#include "Luau/Ast.h"
+#include "Luau/Common.h"
+#include "Luau/Module.h"
+
 struct GlobalOptions {
 	int optimizationLevel = 1;
 	int debugLevel = 1;
@@ -56,34 +67,7 @@ static int lua_collectgarbage(lua_State* L) {
 	luaL_error(L, "collectgarbage must be called with 'count' or 'collect'");
 }
 
-int main(int argc, char* argv[]) {
-	std::string script;
-
-	if (argc < 2) {
-		std::cout << "Usage: " << argv[0] << " <script_string> or " << argv[0] << " -f <script_file>" << std::endl;
-		return 1;
-	}
-
-	if (std::string(argv[1]) == "-f") {
-		if (argc < 3) {
-			std::cout << "Error: No file specified after -f flag" << std::endl;
-			return 1;
-		}
-
-		std::ifstream file(argv[2]);
-		if (!file.is_open()) {
-			std::cout << "Error: Could not open file " << argv[2] << std::endl;
-			return 1;
-		}
-
-		std::stringstream buffer;
-		buffer << file.rdbuf();
-		script = buffer.str();
-
-	} else {
-		script = argv[1];
-	}
-
+void runLuau(const std::string& script) {
 	lua_State* L = luaL_newstate();
 
 	luaL_openlibs(L);
@@ -138,6 +122,42 @@ int main(int argc, char* argv[]) {
 		lua_pop(L, 1);
 		// return error;
 	}
+}
+
+void analyzeLuau(const std::string& script) {
+	
+}
+
+int main(int argc, char* argv[]) {
+	std::string script;
+
+	if (argc < 2) {
+		std::cout << "Usage: " << argv[0] << " <script_string> or " << argv[0] << " -f <script_file>" << std::endl;
+		return 1;
+	}
+
+	if (std::string(argv[1]) == "-f") {
+		if (argc < 3) {
+			std::cout << "Error: No file specified after -f flag" << std::endl;
+			return 1;
+		}
+
+		std::ifstream file(argv[2]);
+		if (!file.is_open()) {
+			std::cout << "Error: Could not open file " << argv[2] << std::endl;
+			return 1;
+		}
+
+		std::stringstream buffer;
+		buffer << file.rdbuf();
+		script = buffer.str();
+
+	} else {
+		script = argv[1];
+	}
+
+	analyzeLuau(script);
+	runLuau(script);
 
 	return 0;
 }
