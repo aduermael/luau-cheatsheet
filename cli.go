@@ -216,24 +216,43 @@ func buildProject() error {
 		if err != nil {
 			return err
 		}
+		files8, err := filepath.Glob("luau/CLI/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files9, err := filepath.Glob("luau/CodeGen/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files10, err := filepath.Glob("luau/extern/isocline/src/*.c")
+		if err != nil {
+			return err
+		}
 
 		args := []string{"-c", "-std=c++17", "-fPIC"}
 
-		args = append(args, files...)  // Common
-		args = append(args, files2...) // Ast
-		args = append(args, files3...) // Compiler
-		args = append(args, files4...) // VM
-		args = append(args, files5...) // Analysis
-		args = append(args, files6...) // Config
-		args = append(args, files7...) // EqSat
+		args = append(args, files...)   // Common
+		args = append(args, files2...)  // Ast
+		args = append(args, files3...)  // Compiler
+		args = append(args, files4...)  // VM
+		args = append(args, files5...)  // Analysis
+		args = append(args, files6...)  // Config
+		args = append(args, files7...)  // EqSat
+		args = append(args, files9...)  // CodeGen
+		args = append(args, files8...)  // CLI
+		args = append(args, files10...) // isocline
 
 		args = append(args, "-I", "luau/Common/include")
 		args = append(args, "-I", "luau/Config/include")
 		args = append(args, "-I", "luau/Ast/include")
 		args = append(args, "-I", "luau/Compiler/include")
 		args = append(args, "-I", "luau/VM/include")
+		args = append(args, "-I", "luau/VM/src")
 		args = append(args, "-I", "luau/Analysis/include")
 		args = append(args, "-I", "luau/EqSat/include")
+		args = append(args, "-I", "luau/CodeGen/include")
+		args = append(args, "-I", "luau/CLI/include")
+		args = append(args, "-I", "luau/extern/isocline/include")
 		args = append(args, "-I", "luau")
 
 		cmdLib := exec.Command("g++", args...)
@@ -272,8 +291,12 @@ func buildProject() error {
 	args = append(args, "-I", "luau/Ast/include")
 	args = append(args, "-I", "luau/Compiler/include")
 	args = append(args, "-I", "luau/VM/include")
+	args = append(args, "-I", "luau/VM/src")
 	args = append(args, "-I", "luau/Analysis/include")
 	args = append(args, "-I", "luau/EqSat/include")
+	args = append(args, "-I", "luau/CodeGen/include")
+	args = append(args, "-I", "luau/CLI/include")
+	args = append(args, "-I", "luau/extern/isocline/include")
 	args = append(args, "-I", "luau")
 	args = append(args, "luau/libluau.a")
 

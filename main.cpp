@@ -22,6 +22,14 @@
 #include "Luau/ToString.h"
 #include "Luau/TypeChecker2.h"
 #include "Luau/NotNull.h"
+#include "Luau/BuiltinDefinitions.h"
+#include "Luau/FileUtils.h"
+
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+#define DEBUG_LOG(msg) do { if (DEBUG) std::cout << "[DEBUG] " << msg << std::endl; } while (0)
 
 struct GlobalOptions {
 	int optimizationLevel = 1;
@@ -37,6 +45,158 @@ static Luau::CompileOptions copts() {
 	result.coverageLevel = 0;
 	return result;
 }
+
+enum class ReportFormat
+{
+    Default,
+    Luacheck,
+    Gnu,
+};
+
+struct CliFileResolver : Luau::FileResolver
+{
+    std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& name) override
+    {
+        Luau::SourceCode::Type sourceType;
+        std::optional<std::string> source = std::nullopt;
+
+        // If the module name is "-", then read source from stdin
+        if (name == "-")
+        {
+            source = readStdin();
+            sourceType = Luau::SourceCode::Script;
+        }
+        else
+        {
+            source = readFile(name);
+            sourceType = Luau::SourceCode::Module;
+        }
+
+        if (!source)
+            return std::nullopt;
+
+        return Luau::SourceCode{*source, sourceType};
+    }
+
+    std::optional<Luau::ModuleInfo> resolveModule(const Luau::ModuleInfo* context, Luau::AstExpr* node) override
+    {
+        if (Luau::AstExprConstantString* expr = node->as<Luau::AstExprConstantString>())
+        {
+            std::string path{expr->value.data, expr->value.size};
+
+            AnalysisRequireContext requireContext{context->name};
+            AnalysisCacheManager cacheManager;
+            AnalysisErrorHandler errorHandler;
+
+            RequireResolver resolver(path, requireContext, cacheManager, errorHandler);
+            RequireResolver::ResolvedRequire resolvedRequire = resolver.resolveRequire();
+
+            if (resolvedRequire.status == RequireResolver::ModuleStatus::FileRead)
+                return {{resolvedRequire.identifier}};
+        }
+
+        return std::nullopt;
+    }
+
+    std::string getHumanReadableModuleName(const Luau::ModuleName& name) const override
+    {
+        if (name == "-")
+            return "stdin";
+        return name;
+    }
+
+private:
+    struct AnalysisRequireContext : RequireResolver::RequireContext
+    {
+        explicit AnalysisRequireContext(std::string path)
+            : path(std::move(path))
+        {
+        }
+
+        std::string getPath() override
+        {
+            return path;
+        }
+
+        bool isRequireAllowed() override
+        {
+            return true;
+        }
+
+        bool isStdin() override
+        {
+            return path == "-";
+        }
+
+        std::string createNewIdentifer(const std::string& path) override
+        {
+            return path;
+        }
+
+    private:
+        std::string path;
+    };
+
+    struct AnalysisCacheManager : public RequireResolver::CacheManager
+    {
+        AnalysisCacheManager() = default;
+    };
+
+    struct AnalysisErrorHandler : RequireResolver::ErrorHandler
+    {
+        AnalysisErrorHandler() = default;
+    };
+};
+
+struct CliConfigResolver : Luau::ConfigResolver
+{
+    Luau::Config defaultConfig;
+
+    mutable std::unordered_map<std::string, Luau::Config> configCache;
+    mutable std::vector<std::pair<std::string, std::string>> configErrors;
+
+    CliConfigResolver(Luau::Mode mode)
+    {
+        defaultConfig.mode = mode;
+    }
+
+    const Luau::Config& getConfig(const Luau::ModuleName& name) const override
+    {
+        std::optional<std::string> path = getParentPath(name);
+        if (!path)
+            return defaultConfig;
+
+        return readConfigRec(*path);
+    }
+
+    const Luau::Config& readConfigRec(const std::string& path) const
+    {
+        auto it = configCache.find(path);
+        if (it != configCache.end())
+            return it->second;
+
+        std::optional<std::string> parent = getParentPath(path);
+        Luau::Config result = parent ? readConfigRec(*parent) : defaultConfig;
+
+        std::string configPath = joinPaths(path, Luau::kConfigName);
+
+        if (std::optional<std::string> contents = readFile(configPath))
+        {
+            Luau::ConfigOptions::AliasOptions aliasOpts;
+            aliasOpts.configLocation = configPath;
+            aliasOpts.overwriteAliases = true;
+
+            Luau::ConfigOptions opts;
+            opts.aliasOptions = std::move(aliasOpts);
+
+            std::optional<std::string> error = Luau::parseConfig(*contents, result, opts);
+            if (error)
+                configErrors.push_back({configPath, *error});
+        }
+
+        return configCache[path] = result;
+    }
+};
 
 static int lua_loadstring(lua_State* L) {
 	size_t l = 0;
@@ -70,17 +230,17 @@ static int lua_collectgarbage(lua_State* L) {
 }
 
 void runLuau(const std::string& script) {
-	std::cout << "Creating Lua state..." << std::endl;
+	DEBUG_LOG("Creating Lua state...");
 	lua_State* L = luaL_newstate();
 	if (!L) {
 		std::cout << "Failed to create Lua state" << std::endl;
 		return;
 	}
 
-	std::cout << "Opening libraries..." << std::endl;
+	DEBUG_LOG("Opening libraries...");
 	luaL_openlibs(L);
 
-	std::cout << "Registering functions..." << std::endl;
+	DEBUG_LOG("Registering functions...");
 	static const luaL_Reg funcs[] = {
 		{"loadstring", lua_loadstring},
 		{"collectgarbage", lua_collectgarbage},
@@ -91,10 +251,10 @@ void runLuau(const std::string& script) {
 	luaL_register(L, NULL, funcs);
 	lua_pop(L, 1);
 
-	std::cout << "Compiling script..." << std::endl;
+	DEBUG_LOG("Compiling script...");
 	std::string bytecode = Luau::compile(script, copts());
 	
-	std::cout << "Loading bytecode..." << std::endl;
+	DEBUG_LOG("Loading bytecode...");
 	if (luau_load(L, "=script", bytecode.data(), bytecode.size(), 0) != 0) {
 		size_t len;
 		const char* msg = lua_tolstring(L, -1, &len);
@@ -104,19 +264,19 @@ void runLuau(const std::string& script) {
 		return;
 	}
 
-	std::cout << "Creating thread..." << std::endl;
+	DEBUG_LOG("Creating thread...");
 	lua_State* T = lua_newthread(L);
 	if (!T) {
 		std::cout << "Failed to create thread" << std::endl;
-		lua_close(L);
-		return;
+			lua_close(L);
+			return;
 	}
 
 	lua_pushvalue(L, -2);
 	lua_remove(L, -3);
 	lua_xmove(L, T, 1);
 
-	std::cout << "Running script..." << std::endl;
+	DEBUG_LOG("Running script...");
 	int status = lua_resume(T, NULL, 0);
 
 	if (status != 0) {
@@ -135,11 +295,44 @@ void runLuau(const std::string& script) {
 		lua_pop(L, 1);
 	}
 
-	std::cout << "Cleaning up..." << std::endl;
+	DEBUG_LOG("Cleaning up...");
 	lua_close(L);
 }
 
-void analyzeLuau(const std::string& script) {}
+static int assertionHandler(const char* expr, const char* file, int line, const char* function)
+{
+    printf("%s(%d): ASSERTION FAILED: %s\n", file, line, expr);
+    fflush(stdout);
+    return 1;
+}
+
+void analyzeLuau(const std::string& script) {
+
+	Luau::assertHandler() = assertionHandler;
+
+    // setLuauFlagsDefault();
+
+	ReportFormat format = ReportFormat::Default;
+    Luau::Mode mode = Luau::Mode::Nonstrict;
+    bool annotate = false;
+    int threadCount = 0;
+    std::string basePath = "";
+
+	// TODO: expose options in parameters
+
+	Luau::FrontendOptions frontendOptions;
+    frontendOptions.retainFullTypeGraphs = annotate;
+    frontendOptions.runLintChecks = true;
+
+	// CliFileResolver fileResolver;
+    // CliConfigResolver configResolver(mode);
+    // Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
+
+	// Luau::registerBuiltinGlobals(frontend, frontend.globals);
+    // Luau::freeze(frontend.globals.globalTypes);
+
+
+}
 
 int main(int argc, char* argv[]) {
 	std::string script;
@@ -156,7 +349,7 @@ int main(int argc, char* argv[]) {
 				return 1;
 			}
 
-			std::cout << "Reading file: " << argv[2] << std::endl;
+			DEBUG_LOG("Reading file: " << argv[2]);
 			std::ifstream file(argv[2]);
 			if (!file.is_open()) {
 				std::cout << "Error: Could not open file " << argv[2] << std::endl;
@@ -171,10 +364,10 @@ int main(int argc, char* argv[]) {
 			script = argv[1];
 		}
 
-		std::cout << "Running analysis..." << std::endl;
+		DEBUG_LOG("Running analysis...");
 		analyzeLuau(script);
 		
-		std::cout << "Running script..." << std::endl;
+		DEBUG_LOG("Running script...");
 		runLuau(script);
 
 	} catch (const std::exception& e) {
