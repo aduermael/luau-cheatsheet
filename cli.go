@@ -186,184 +186,104 @@ func cleanProject() error {
 }
 
 func buildProject() error {
-	// Check if main.cpp exists
-	if _, err := os.Stat("main.cpp"); os.IsNotExist(err) {
-		return fmt.Errorf("main.cpp not found")
+	// Create build script
+	buildScript := `#!/bin/bash
+set -e
+
+# Create build directory
+mkdir -p build
+cd build
+
+# Run CMake
+cmake ..
+
+# Build using all available cores
+cmake --build . --parallel $(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 1)
+
+# Copy executable to parent directory
+cp main ..
+`
+
+	if err := os.WriteFile("build.sh", []byte(buildScript), 0755); err != nil {
+		return fmt.Errorf("failed to write build script: %v", err)
 	}
 
-	// Build command varies by platform
-	if runtime.GOOS == "windows" {
-		return fmt.Errorf("Windows build not yet implemented")
+	// Create CMakeLists.txt
+	cmakeContents := `cmake_minimum_required(VERSION 3.10)
+project(LuauProject)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Add Luau subdirectory
+add_subdirectory(luau)
+
+# Add executable
+add_executable(main main.cpp)
+
+# Link against Luau libraries
+target_link_libraries(main PRIVATE 
+    Luau.Ast
+    Luau.Compiler
+    Luau.VM
+    Luau.Analysis
+    Luau.CodeGen
+    Luau.CLI.lib
+    isocline
+)
+
+# Include directories
+target_include_directories(main PRIVATE
+    ${CMAKE_SOURCE_DIR}/luau/Common/include
+    ${CMAKE_SOURCE_DIR}/luau/Ast/include
+    ${CMAKE_SOURCE_DIR}/luau/Compiler/include
+    ${CMAKE_SOURCE_DIR}/luau/VM/include
+    ${CMAKE_SOURCE_DIR}/luau/Analysis/include
+    ${CMAKE_SOURCE_DIR}/luau/CodeGen/include
+    ${CMAKE_SOURCE_DIR}/luau/CLI/include
+    ${CMAKE_SOURCE_DIR}/luau/CLI/src
+    ${CMAKE_SOURCE_DIR}/luau/extern/isocline/include
+)
+`
+
+	if err := os.WriteFile("CMakeLists.txt", []byte(cmakeContents), 0644); err != nil {
+		return fmt.Errorf("failed to write CMakeLists.txt: %v", err)
 	}
 
-	// Check if libluau.a and libisocline.a exist
-	buildIsocline := false
-	buildLuau := false
-
-	if _, err := os.Stat("luau/libisocline.a"); os.IsNotExist(err) {
-		buildIsocline = true
-	}
-	if _, err := os.Stat("luau/libluau.a"); os.IsNotExist(err) {
-		buildLuau = true
-	}
-
-	// Build isocline library first if needed
-	if buildIsocline {
-		// allFiles, err := filepath.Glob("luau/extern/isocline/src/*.c")
-		// if err != nil {
-		// 	return err
-		// }
-		// files := make([]string, 0)
-		// for _, f := range allFiles {
-		// 	if !strings.Contains(f, "term_color.c") {
-		// 		files = append(files, f)
-		// 	}
-		// }
-
-		args := []string{"-c", "-std=c99", "-Werror", "luau/extern/isocline/src/isocline.c"} // "-Wall"
-		// args = append(args, files...)
-		args = append(args, "-I", "luau/extern/isocline/include")
-
-		cmdIsocline := exec.Command("gcc", args...)
-		cmdIsocline.Stdout = os.Stdout
-		cmdIsocline.Stderr = os.Stderr
-
-		if err := cmdIsocline.Run(); err != nil {
-			return err
-		}
-
-		// Create isocline static library
-		objFiles, err := filepath.Glob("*.o")
-		if err != nil {
-			return err
-		}
-
-		arCmd := exec.Command("ar", append([]string{"rcs", "luau/libisocline.a"}, objFiles...)...)
-		arCmd.Stdout = os.Stdout
-		arCmd.Stderr = os.Stderr
-
-		if err := arCmd.Run(); err != nil {
-			return err
-		}
-
-		// Clean up object files
-		for _, obj := range objFiles {
-			os.Remove(obj)
-		}
-	}
-
-	// Build Luau library if needed
-	if buildLuau {
-		files, err := filepath.Glob("luau/Common/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files2, err := filepath.Glob("luau/Ast/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files3, err := filepath.Glob("luau/Compiler/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files4, err := filepath.Glob("luau/VM/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files5, err := filepath.Glob("luau/Analysis/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files6, err := filepath.Glob("luau/Config/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files7, err := filepath.Glob("luau/EqSat/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files8, err := filepath.Glob("luau/CLI/src/*.cpp")
-		if err != nil {
-			return err
-		}
-		files9, err := filepath.Glob("luau/CodeGen/src/*.cpp")
-		if err != nil {
-			return err
-		}
-
-		args := []string{"-c", "-std=c++17", "-fPIC"}
-
-		args = append(args, files...)  // Common
-		args = append(args, files2...) // Ast
-		args = append(args, files3...) // Compiler
-		args = append(args, files4...) // VM
-		args = append(args, files5...) // Analysis
-		args = append(args, files6...) // Config
-		args = append(args, files7...) // EqSat
-		args = append(args, files9...) // CodeGen
-		args = append(args, files8...) // CLI
-
-		args = append(args, "-I", "luau/Common/include")
-		args = append(args, "-I", "luau/Config/include")
-		args = append(args, "-I", "luau/Ast/include")
-		args = append(args, "-I", "luau/Compiler/include")
-		args = append(args, "-I", "luau/VM/include")
-		args = append(args, "-I", "luau/VM/src")
-		args = append(args, "-I", "luau/Analysis/include")
-		args = append(args, "-I", "luau/EqSat/include")
-		args = append(args, "-I", "luau/CodeGen/include")
-		args = append(args, "-I", "luau/CLI/include")
-		args = append(args, "-I", "luau/extern/isocline/include")
-		args = append(args, "-I", "luau")
-
-		cmdLib := exec.Command("g++", args...)
-		cmdLib.Stdout = os.Stdout
-		cmdLib.Stderr = os.Stderr
-
-		if err := cmdLib.Run(); err != nil {
-			return err
-		}
-
-		// Create static library
-		objFiles, err := filepath.Glob("*.o")
-		if err != nil {
-			return err
-		}
-
-		arCmd := exec.Command("ar", append([]string{"rcs", "luau/libluau.a"}, objFiles...)...)
-		arCmd.Stdout = os.Stdout
-		arCmd.Stderr = os.Stderr
-
-		if err := arCmd.Run(); err != nil {
-			return err
-		}
-
-		// Clean up object files
-		for _, obj := range objFiles {
-			os.Remove(obj)
-		}
-	}
-
-	// Build main program
-	args := []string{"-o", "main", "-std=c++17"}
-	args = append(args, "main.cpp")
-	args = append(args, "-I", "luau/Common/include")
-	args = append(args, "-I", "luau/Config/include")
-	args = append(args, "-I", "luau/Ast/include")
-	args = append(args, "-I", "luau/Compiler/include")
-	args = append(args, "-I", "luau/VM/include")
-	args = append(args, "-I", "luau/VM/src")
-	args = append(args, "-I", "luau/Analysis/include")
-	args = append(args, "-I", "luau/EqSat/include")
-	args = append(args, "-I", "luau/CodeGen/include")
-	args = append(args, "-I", "luau/CLI/include")
-	args = append(args, "-I", "luau/extern/isocline/include")
-	args = append(args, "-I", "luau")
-	args = append(args, "luau/libluau.a")
-
-	cmd := exec.Command("g++", args...)
+	// Run the build script
+	cmd := exec.Command("/bin/bash", "build.sh")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("build failed: %v", err)
+	}
 
-	return cmd.Run()
+	return nil
+}
+
+// Helper function to copy files
+func copyFile(src, dst string) error {
+	sourceFile, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return err
+	}
+
+	// Ensure the executable bit is set
+	if err := os.Chmod(dst, 0755); err != nil {
+		return err
+	}
+
+	return nil
 }

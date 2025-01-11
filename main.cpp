@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
+#include <thread>
 
 #include "lua.h"
 #include "lualib.h"
@@ -25,6 +26,8 @@
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/FileUtils.h"
 #include "Luau/Require.h"
+#include "Luau/TypeAttach.h"
+#include "Luau/Transpiler.h"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -199,6 +202,78 @@ struct CliConfigResolver : Luau::ConfigResolver
     }
 };
 
+
+struct TaskScheduler
+{
+    TaskScheduler(unsigned threadCount)
+        : threadCount(threadCount)
+    {
+        for (unsigned i = 0; i < threadCount; i++)
+        {
+            workers.emplace_back(
+                [this]
+                {
+                    workerFunction();
+                }
+            );
+        }
+    }
+
+    ~TaskScheduler()
+    {
+        for (unsigned i = 0; i < threadCount; i++)
+            push({});
+
+        for (std::thread& worker : workers)
+            worker.join();
+    }
+
+    std::function<void()> pop()
+    {
+        std::unique_lock guard(mtx);
+
+        cv.wait(
+            guard,
+            [this]
+            {
+                return !tasks.empty();
+            }
+        );
+
+        std::function<void()> task = tasks.front();
+        tasks.pop();
+        return task;
+    }
+
+    void push(std::function<void()> task)
+    {
+        {
+            std::unique_lock guard(mtx);
+            tasks.push(std::move(task));
+        }
+
+        cv.notify_one();
+    }
+
+    static unsigned getThreadCount()
+    {
+        return std::max(std::thread::hardware_concurrency(), 1u);
+    }
+
+private:
+    void workerFunction()
+    {
+        while (std::function<void()> task = pop())
+            task();
+    }
+
+    unsigned threadCount = 1;
+    std::mutex mtx;
+    std::condition_variable cv;
+    std::vector<std::thread> workers;
+    std::queue<std::function<void()>> tasks;
+};
+
 static int lua_loadstring(lua_State* L) {
 	size_t l = 0;
 	const char* s = luaL_checklstring(L, 1, &l);
@@ -230,6 +305,93 @@ static int lua_collectgarbage(lua_State* L) {
 	luaL_error(L, "collectgarbage must be called with 'count' or 'collect'");
 }
 
+static void report(ReportFormat format, const char* name, const Luau::Location& loc, const char* type, const char* message)
+{
+    switch (format)
+    {
+    case ReportFormat::Default:
+        fprintf(stderr, "%s(%d,%d): %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, type, message);
+        break;
+
+    case ReportFormat::Luacheck:
+    {
+        // Note: luacheck's end column is inclusive but our end column is exclusive
+        // In addition, luacheck doesn't support multi-line messages, so if the error is multiline we'll fake end column as 100 and hope for the best
+        int columnEnd = (loc.begin.line == loc.end.line) ? loc.end.column : 100;
+
+        // Use stdout to match luacheck behavior
+        fprintf(stdout, "%s:%d:%d-%d: (W0) %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, columnEnd, type, message);
+        break;
+    }
+
+    case ReportFormat::Gnu:
+        // Note: GNU end column is inclusive but our end column is exclusive
+        fprintf(stderr, "%s:%d.%d-%d.%d: %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, loc.end.line + 1, loc.end.column, type, message);
+        break;
+    }
+}
+
+static void reportError(const Luau::Frontend& frontend, ReportFormat format, const Luau::TypeError& error)
+{
+    std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(error.moduleName);
+
+    if (const Luau::SyntaxError* syntaxError = Luau::get_if<Luau::SyntaxError>(&error.data))
+        report(format, humanReadableName.c_str(), error.location, "SyntaxError", syntaxError->message.c_str());
+    else
+        report(
+            format,
+            humanReadableName.c_str(),
+            error.location,
+            "TypeError",
+            Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str()
+        );
+}
+
+static void reportWarning(ReportFormat format, const char* name, const Luau::LintWarning& warning)
+{
+    report(format, name, warning.location, Luau::LintWarning::getName(warning.code), warning.text.c_str());
+}
+
+static bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName& name, ReportFormat format, bool annotate)
+{
+    std::optional<Luau::CheckResult> cr = frontend.getCheckResult(name, false);
+
+    if (!cr)
+    {
+        fprintf(stderr, "Failed to find result for %s\n", name.c_str());
+        return false;
+    }
+
+    if (!frontend.getSourceModule(name))
+    {
+        fprintf(stderr, "Error opening %s\n", name.c_str());
+        return false;
+    }
+
+    for (auto& error : cr->errors)
+        reportError(frontend, format, error);
+
+    std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(name);
+    for (auto& error : cr->lintResult.errors)
+        reportWarning(format, humanReadableName.c_str(), error);
+    for (auto& warning : cr->lintResult.warnings)
+        reportWarning(format, humanReadableName.c_str(), warning);
+
+    if (annotate)
+    {
+        Luau::SourceModule* sm = frontend.getSourceModule(name);
+        Luau::ModulePtr m = frontend.moduleResolver.getModule(name);
+
+        Luau::attachTypeData(*sm, *m);
+
+        std::string annotated = Luau::transpileWithTypes(*sm->root);
+
+        printf("%s", annotated.c_str());
+    }
+
+    return cr->errors.empty() && cr->lintResult.errors.empty();
+}
+
 void runLuau(const std::string& script) {
 	DEBUG_LOG("Creating Lua state...");
 	lua_State* L = luaL_newstate();
@@ -254,6 +416,12 @@ void runLuau(const std::string& script) {
 
 	DEBUG_LOG("Compiling script...");
 	std::string bytecode = Luau::compile(script, copts());
+
+	printf("BYTE CODE: ");
+	for (unsigned char c : bytecode) {
+		printf("%02X ", c);
+	}
+	printf("\n");
 	
 	DEBUG_LOG("Loading bytecode...");
 	if (luau_load(L, "=script", bytecode.data(), bytecode.size(), 0) != 0) {
@@ -307,14 +475,14 @@ static int assertionHandler(const char* expr, const char* file, int line, const 
     return 1;
 }
 
-void analyzeLuau(const std::string& script) {
+void analyzeLuau(const std::string& scriptFilePath) {
 
 	Luau::assertHandler() = assertionHandler;
 
     // setLuauFlagsDefault();
 
 	ReportFormat format = ReportFormat::Default;
-    Luau::Mode mode = Luau::Mode::Nonstrict;
+    Luau::Mode mode = Luau::Mode::Strict;
     bool annotate = false;
     int threadCount = 0;
     std::string basePath = "";
@@ -325,18 +493,86 @@ void analyzeLuau(const std::string& script) {
     frontendOptions.retainFullTypeGraphs = annotate;
     frontendOptions.runLintChecks = true;
 
-	// CliFileResolver fileResolver;
-    // CliConfigResolver configResolver(mode);
-    // Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
+	CliFileResolver fileResolver;
+    CliConfigResolver configResolver(mode);
+    Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
 
-	// Luau::registerBuiltinGlobals(frontend, frontend.globals);
-    // Luau::freeze(frontend.globals.globalTypes);
+	Luau::registerBuiltinGlobals(frontend, frontend.globals);
+    Luau::freeze(frontend.globals.globalTypes);
 
+	std::vector<std::string> files = {
+		scriptFilePath,
+	};
 
+	for (const std::string& path : files)
+        frontend.queueModuleCheck(path);
+
+	std::vector<Luau::ModuleName> checkedModules;
+
+		// If thread count is not set, try to use HW thread count, but with an upper limit
+    // When we improve scalability of typechecking, upper limit can be adjusted/removed
+    if (threadCount <= 0)
+        threadCount = std::min(TaskScheduler::getThreadCount(), 8u);
+
+    try
+    {
+        TaskScheduler scheduler(threadCount);
+
+        checkedModules = frontend.checkQueuedModules(
+            std::nullopt,
+            [&](std::function<void()> f)
+            {
+                scheduler.push(std::move(f));
+            }
+        );
+    }
+    catch (const Luau::InternalCompilerError& ice)
+    {
+        Luau::Location location = ice.location ? *ice.location : Luau::Location();
+
+        std::string moduleName = ice.moduleName ? *ice.moduleName : "<unknown module>";
+        std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(moduleName);
+
+        Luau::TypeError error(location, moduleName, Luau::InternalError{ice.message});
+
+		std::cout << "ERROR" << std::endl;
+        report(
+            format,
+            humanReadableName.c_str(),
+            location,
+            "InternalCompilerError",
+            Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str()
+        );
+        // return 1;
+    }
+
+	int failed = 0;
+
+    for (const Luau::ModuleName& name : checkedModules) {
+        failed += !reportModuleResult(frontend, name, format, annotate);
+	}
+
+    if (!configResolver.configErrors.empty())
+    {
+        failed += int(configResolver.configErrors.size());
+
+        for (const auto& pair : configResolver.configErrors)
+            fprintf(stderr, "%s: %s\n", pair.first.c_str(), pair.second.c_str());
+    }
+
+    if (format == ReportFormat::Luacheck) {
+		// return 0;
+	} else {
+        // return failed ? 1 : 0;
+	}
+
+	// std::cout << "DONE ANALYZING - FAILED: " << failed << std::endl;
+	std::cout << "DONE ANALYZING" << std::endl;
 }
 
 int main(int argc, char* argv[]) {
 	std::string script;
+	std::string scriptFilePath = "";
 
 	if (argc < 2) {
 		std::cout << "Usage: " << argv[0] << " <script_string> or " << argv[0] << " -f <script_file>" << std::endl;
@@ -349,6 +585,8 @@ int main(int argc, char* argv[]) {
 				std::cout << "Error: No file specified after -f flag" << std::endl;
 				return 1;
 			}
+
+			scriptFilePath = argv[2];
 
 			DEBUG_LOG("Reading file: " << argv[2]);
 			std::ifstream file(argv[2]);
@@ -365,8 +603,10 @@ int main(int argc, char* argv[]) {
 			script = argv[1];
 		}
 
-		DEBUG_LOG("Running analysis...");
-		analyzeLuau(script);
+		if (scriptFilePath != "") {
+			DEBUG_LOG("Running analysis...");
+			analyzeLuau(scriptFilePath);
+		}
 		
 		DEBUG_LOG("Running script...");
 		runLuau(script);
