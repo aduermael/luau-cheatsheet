@@ -178,87 +178,52 @@ func buildProject() error {
 	}
 
 	// Build command varies by platform
-	var cmd *exec.Cmd
 	if runtime.GOOS == "windows" {
-		// TODO: Implement Windows build
-	} else {
-		// Check if libluau.a exists
-		if _, err := os.Stat("luau/libluau.a"); os.IsNotExist(err) {
-			// Build Luau library
-			files, err := filepath.Glob("luau/Common/src/*.cpp")
-			if err != nil {
-				return err
-			}
-			files2, err := filepath.Glob("luau/Ast/src/*.cpp")
-			if err != nil {
-				return err
-			}
-			files3, err := filepath.Glob("luau/Compiler/src/*.cpp")
-			if err != nil {
-				return err
-			}
-			files4, err := filepath.Glob("luau/VM/src/*.cpp")
-			if err != nil {
-				return err
-			}
-			files5, err := filepath.Glob("luau/Analysis/src/*.cpp")
-			if err != nil {
-				return err
-			}
-			files6, err := filepath.Glob("luau/Config/src/*.cpp")
-			if err != nil {
-				return err
-			}
+		return fmt.Errorf("Windows build not yet implemented")
+	}
 
-			args := []string{"-c", "-std=c++17"}
-
-			args = append(args, files...)  // Common
-			args = append(args, files4...) // VM
-			args = append(args, files2...) // Ast
-			args = append(args, files6...) // Config
-			args = append(args, files5...) // Analysis
-			args = append(args, files3...) // Compiler
-
-			args = append(args, "-I", "luau/Common/include")
-			args = append(args, "-I", "luau/Config/include")
-			args = append(args, "-I", "luau/Ast/include")
-			args = append(args, "-I", "luau/Compiler/include")
-			args = append(args, "-I", "luau/VM/include")
-			args = append(args, "-I", "luau/Analysis/include")
-			args = append(args, "-I", "luau/EqSat/include")
-			args = append(args, "-I", "luau")
-
-			cmdLib := exec.Command("g++", args...)
-			cmdLib.Stdout = os.Stdout
-			cmdLib.Stderr = os.Stderr
-
-			if err := cmdLib.Run(); err != nil {
-				return err
-			}
-
-			// Create static library
-			objFiles, err := filepath.Glob("*.o")
-			if err != nil {
-				return err
-			}
-
-			arCmd := exec.Command("ar", append([]string{"rcs", "luau/libluau.a"}, objFiles...)...)
-			arCmd.Stdout = os.Stdout
-			arCmd.Stderr = os.Stderr
-
-			if err := arCmd.Run(); err != nil {
-				return err
-			}
-
-			// Clean up object files
-			for _, obj := range objFiles {
-				os.Remove(obj)
-			}
+	// Check if libluau.a exists
+	if _, err := os.Stat("luau/libluau.a"); os.IsNotExist(err) {
+		// Build Luau library
+		files, err := filepath.Glob("luau/Common/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files2, err := filepath.Glob("luau/Ast/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files3, err := filepath.Glob("luau/Compiler/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files4, err := filepath.Glob("luau/VM/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files5, err := filepath.Glob("luau/Analysis/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files6, err := filepath.Glob("luau/Config/src/*.cpp")
+		if err != nil {
+			return err
+		}
+		files7, err := filepath.Glob("luau/EqSat/src/*.cpp")
+		if err != nil {
+			return err
 		}
 
-		// Build main program
-		args := []string{"-o", "main", "-std=c++17"}
-		args = append(args, "main.cpp")
+		args := []string{"-c", "-std=c++17", "-fPIC"}
+
+		args = append(args, files...)  // Common
+		args = append(args, files2...) // Ast
+		args = append(args, files3...) // Compiler
+		args = append(args, files4...) // VM
+		args = append(args, files5...) // Analysis
+		args = append(args, files6...) // Config
+		args = append(args, files7...) // EqSat
+
 		args = append(args, "-I", "luau/Common/include")
 		args = append(args, "-I", "luau/Config/include")
 		args = append(args, "-I", "luau/Ast/include")
@@ -267,11 +232,51 @@ func buildProject() error {
 		args = append(args, "-I", "luau/Analysis/include")
 		args = append(args, "-I", "luau/EqSat/include")
 		args = append(args, "-I", "luau")
-		args = append(args, "luau/libluau.a")
-		// args = append(args, "-v")
-		cmd = exec.Command("g++", args...)
+
+		cmdLib := exec.Command("g++", args...)
+		cmdLib.Stdout = os.Stdout
+		cmdLib.Stderr = os.Stderr
+
+		if err := cmdLib.Run(); err != nil {
+			return err
+		}
+
+		// Create static library
+		objFiles, err := filepath.Glob("*.o")
+		if err != nil {
+			return err
+		}
+
+		arCmd := exec.Command("ar", append([]string{"rcs", "luau/libluau.a"}, objFiles...)...)
+		arCmd.Stdout = os.Stdout
+		arCmd.Stderr = os.Stderr
+
+		if err := arCmd.Run(); err != nil {
+			return err
+		}
+
+		// Clean up object files
+		for _, obj := range objFiles {
+			os.Remove(obj)
+		}
 	}
 
+	// Build main program
+	args := []string{"-o", "main", "-std=c++17"}
+	args = append(args, "main.cpp")
+	args = append(args, "-I", "luau/Common/include")
+	args = append(args, "-I", "luau/Config/include")
+	args = append(args, "-I", "luau/Ast/include")
+	args = append(args, "-I", "luau/Compiler/include")
+	args = append(args, "-I", "luau/VM/include")
+	args = append(args, "-I", "luau/Analysis/include")
+	args = append(args, "-I", "luau/EqSat/include")
+	args = append(args, "-I", "luau")
+	args = append(args, "luau/libluau.a")
+	args = append(args, "-lstdc++")
+	args = append(args, "-pthread")
+
+	cmd := exec.Command("g++", args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
