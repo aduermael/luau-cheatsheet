@@ -24,6 +24,7 @@
 #include "Luau/NotNull.h"
 #include "Luau/BuiltinDefinitions.h"
 #include "Luau/FileUtils.h"
+#include "Luau/Require.h"
 
 #ifndef DEBUG
 #define DEBUG 0

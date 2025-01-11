@@ -196,9 +196,64 @@ func buildProject() error {
 		return fmt.Errorf("Windows build not yet implemented")
 	}
 
-	// Check if libluau.a exists
+	// Check if libluau.a and libisocline.a exist
+	buildIsocline := false
+	buildLuau := false
+
+	if _, err := os.Stat("luau/libisocline.a"); os.IsNotExist(err) {
+		buildIsocline = true
+	}
 	if _, err := os.Stat("luau/libluau.a"); os.IsNotExist(err) {
-		// Build Luau library
+		buildLuau = true
+	}
+
+	// Build isocline library first if needed
+	if buildIsocline {
+		// allFiles, err := filepath.Glob("luau/extern/isocline/src/*.c")
+		// if err != nil {
+		// 	return err
+		// }
+		// files := make([]string, 0)
+		// for _, f := range allFiles {
+		// 	if !strings.Contains(f, "term_color.c") {
+		// 		files = append(files, f)
+		// 	}
+		// }
+
+		args := []string{"-c", "-std=c99", "-Werror", "luau/extern/isocline/src/isocline.c"} // "-Wall"
+		// args = append(args, files...)
+		args = append(args, "-I", "luau/extern/isocline/include")
+
+		cmdIsocline := exec.Command("gcc", args...)
+		cmdIsocline.Stdout = os.Stdout
+		cmdIsocline.Stderr = os.Stderr
+
+		if err := cmdIsocline.Run(); err != nil {
+			return err
+		}
+
+		// Create isocline static library
+		objFiles, err := filepath.Glob("*.o")
+		if err != nil {
+			return err
+		}
+
+		arCmd := exec.Command("ar", append([]string{"rcs", "luau/libisocline.a"}, objFiles...)...)
+		arCmd.Stdout = os.Stdout
+		arCmd.Stderr = os.Stderr
+
+		if err := arCmd.Run(); err != nil {
+			return err
+		}
+
+		// Clean up object files
+		for _, obj := range objFiles {
+			os.Remove(obj)
+		}
+	}
+
+	// Build Luau library if needed
+	if buildLuau {
 		files, err := filepath.Glob("luau/Common/src/*.cpp")
 		if err != nil {
 			return err
@@ -235,23 +290,18 @@ func buildProject() error {
 		if err != nil {
 			return err
 		}
-		files10, err := filepath.Glob("luau/extern/isocline/src/*.c")
-		if err != nil {
-			return err
-		}
 
 		args := []string{"-c", "-std=c++17", "-fPIC"}
 
-		args = append(args, files...)   // Common
-		args = append(args, files2...)  // Ast
-		args = append(args, files3...)  // Compiler
-		args = append(args, files4...)  // VM
-		args = append(args, files5...)  // Analysis
-		args = append(args, files6...)  // Config
-		args = append(args, files7...)  // EqSat
-		args = append(args, files9...)  // CodeGen
-		args = append(args, files8...)  // CLI
-		args = append(args, files10...) // isocline
+		args = append(args, files...)  // Common
+		args = append(args, files2...) // Ast
+		args = append(args, files3...) // Compiler
+		args = append(args, files4...) // VM
+		args = append(args, files5...) // Analysis
+		args = append(args, files6...) // Config
+		args = append(args, files7...) // EqSat
+		args = append(args, files9...) // CodeGen
+		args = append(args, files8...) // CLI
 
 		args = append(args, "-I", "luau/Common/include")
 		args = append(args, "-I", "luau/Config/include")
