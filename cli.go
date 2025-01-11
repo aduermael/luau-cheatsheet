@@ -171,6 +171,17 @@ func cleanProject() error {
 		return err
 	}
 
+	// Remove all .o files in project root
+	files, err := filepath.Glob("*.o")
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		if err := os.Remove(f); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
