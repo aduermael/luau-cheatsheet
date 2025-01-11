@@ -30,3 +30,5 @@ local onlyString: string = 42
 -- local tt2 = Instance.new("TestType")
 
 -- print(tt2:IsA("TestType"))
+
+local x: string = 42  -- This should trigger a type error

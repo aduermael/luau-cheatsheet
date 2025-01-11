@@ -117,6 +117,9 @@ func downloadLuauDeps() error {
 		"luau/Analysis/include/Luau/Module.h",
 		"luau/EqSat/include/Luau/EGraph.h",
 		"luau/Analysis/include/Luau/EqSatSimplificationImpl.h",
+		"luau/Analysis/include/Luau/BuiltinTypes.h",
+		"luau/Analysis/include/Luau/Frontend.h",
+		"luau/Analysis/include/Luau/TypeInfer.h",
 	}
 
 	fmt.Println("\nVerifying critical files:")
@@ -273,8 +276,6 @@ func buildProject() error {
 	args = append(args, "-I", "luau/EqSat/include")
 	args = append(args, "-I", "luau")
 	args = append(args, "luau/libluau.a")
-	args = append(args, "-lstdc++")
-	args = append(args, "-pthread")
 
 	cmd := exec.Command("g++", args...)
 	cmd.Stdout = os.Stdout

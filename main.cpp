@@ -17,6 +17,11 @@
 #include "Luau/Linter.h"
 #include "Luau/TypeArena.h"
 #include "Luau/Type.h"
+#include "Luau/Frontend.h"
+#include "Luau/TypeInfer.h"
+#include "Luau/ToString.h"
+#include "Luau/TypeChecker2.h"
+#include "Luau/NotNull.h"
 
 struct GlobalOptions {
 	int optimizationLevel = 1;
@@ -134,119 +139,7 @@ void runLuau(const std::string& script) {
 	lua_close(L);
 }
 
-void analyzeLuau(const std::string& script) {
-	std::cout << "Starting analysis..." << std::endl;
-	
-	try {
-		std::cout << "Creating allocator..." << std::endl;
-		Luau::Allocator allocator;
-		
-		std::cout << "Creating name table..." << std::endl;
-		Luau::AstNameTable names(allocator);
-		
-		std::cout << "Setting up parser options..." << std::endl;
-		Luau::ParseOptions parseOptions;
-		
-		std::cout << "Parsing script..." << std::endl;
-		Luau::ParseResult parseResult = Luau::Parser::parse(script.c_str(), script.length(), names, allocator);
-		
-		std::cout << "Checking for parse errors..." << std::endl;
-		if (!parseResult.errors.empty()) {
-			std::cout << "Parse errors:" << std::endl;
-			for (const auto& error : parseResult.errors) {
-				std::cout << "Line " << error.getLocation().begin.line + 1 
-						 << ": " << error.getMessage() << std::endl;
-			}
-			return;
-		}
-
-		if (!parseResult.root) {
-			std::cout << "Error: No AST root after parsing" << std::endl;
-			return;
-		}
-
-		std::cout << "Creating source module..." << std::endl;
-		Luau::SourceModule sourceModule;
-		sourceModule.root = parseResult.root;
-		
-		std::cout << "Creating module scope..." << std::endl;
-		Luau::ModulePtr moduleScope = std::make_shared<Luau::Module>();
-		if (!moduleScope) {
-			std::cout << "Error: Failed to create module scope" << std::endl;
-			return;
-		}
-		moduleScope->name = "MainModule";
-		
-		std::cout << "Running linter..." << std::endl;
-		try {
-			// Print some debug info about the AST
-			if (parseResult.root) {
-				std::cout << "AST root is a block statement" << std::endl;
-				
-				const auto& statements = parseResult.root->body;
-				std::cout << "Block contains " << statements.size << " statements" << std::endl;
-				
-				for (size_t i = 0; i < statements.size; ++i) {
-					if (statements.data[i]) {
-						std::cout << "Statement " << i << " is present" << std::endl;
-						// Try to get more info about the statement type
-						const auto* stmt = statements.data[i];
-						if (const Luau::AstStatLocal* local = stmt->as<Luau::AstStatLocal>())
-							std::cout << "  Type: Local variable declaration" << std::endl;
-						else if (const Luau::AstStatExpr* expr = stmt->as<Luau::AstStatExpr>())
-							std::cout << "  Type: Expression statement" << std::endl;
-					}
-				}
-			}
-
-			// Create root scope
-			std::cout << "Creating root scope..." << std::endl;
-			Luau::TypeArena arena;
-			Luau::TypePackId emptyPack = arena.addTypePack({});
-			
-			Luau::ScopePtr rootScope = std::make_shared<Luau::Scope>(emptyPack);
-			if (!rootScope) {
-				std::cout << "Failed to create root scope" << std::endl;
-				return;
-			}
-
-			std::cout << "Starting lint call..." << std::endl;
-			
-			// Try linting with root scope
-			auto lintResult = Luau::lint(
-				parseResult.root,  // AST root
-				names,            // Name table
-				rootScope,        // Root scope
-				nullptr,          // No module needed
-				{},              // Empty hot comments
-				{}               // Default lint options
-			);
-			
-			std::cout << "Lint call completed" << std::endl;
-			
-			if (!lintResult.empty()) {
-				std::cout << "Found " << lintResult.size() << " lint warnings" << std::endl;
-				for (const auto& warning : lintResult) {
-					std::cout << "Line " << warning.location.begin.line + 1 
-							 << ": " << warning.text << std::endl;
-				}
-			} else {
-				std::cout << "No lint warnings found" << std::endl;
-			}
-			
-		} catch (const std::exception& e) {
-			std::cout << "Exception during linting: " << e.what() << std::endl;
-		} catch (...) {
-			std::cout << "Unknown exception during linting" << std::endl;
-		}
-		
-		std::cout << "Analysis complete." << std::endl;
-	} catch (const std::exception& e) {
-		std::cout << "Exception during analysis: " << e.what() << std::endl;
-	} catch (...) {
-		std::cout << "Unknown exception during analysis" << std::endl;
-	}
-}
+void analyzeLuau(const std::string& script) {}
 
 int main(int argc, char* argv[]) {
 	std::string script;
