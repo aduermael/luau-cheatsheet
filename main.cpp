@@ -202,7 +202,6 @@ struct CliConfigResolver : Luau::ConfigResolver
     }
 };
 
-
 struct TaskScheduler
 {
     TaskScheduler(unsigned threadCount)
@@ -392,6 +391,88 @@ static bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName&
     return cr->errors.empty() && cr->lintResult.errors.empty();
 }
 
+static int lua_require(lua_State* L)
+{
+    std::string name = luaL_checkstring(L, 1);
+
+    // RequireResolver::ResolvedRequire resolvedRequire;
+    // {
+    //     lua_Debug ar;
+    //     lua_getinfo(L, 1, "s", &ar);
+
+    //     RuntimeRequireContext requireContext{ar.source};
+    //     RuntimeCacheManager cacheManager{L};
+    //     RuntimeErrorHandler errorHandler{L};
+
+    //     RequireResolver resolver(std::move(name), requireContext, cacheManager, errorHandler);
+
+    //     resolvedRequire = resolver.resolveRequire(
+    //         [L, &cacheKey = cacheManager.cacheKey](const RequireResolver::ModuleStatus status)
+    //         {
+    //             lua_getfield(L, LUA_REGISTRYINDEX, "_MODULES");
+    //             if (status == RequireResolver::ModuleStatus::Cached)
+    //                 lua_getfield(L, -1, cacheKey.c_str());
+    //         }
+    //     );
+    // }
+
+    // if (resolvedRequire.status == RequireResolver::ModuleStatus::Cached)
+    //     return finishrequire(L);
+
+    // module needs to run in a new thread, isolated from the rest
+    // note: we create ML on main thread so that it doesn't inherit environment of L
+    lua_State* GL = lua_mainthread(L);
+    lua_State* ML = lua_newthread(GL);
+    lua_xmove(GL, L, 1);
+
+    // new thread needs to have the globals sandboxed
+    luaL_sandboxthread(ML);
+
+    // // now we can compile & run module on the new thread
+    // std::string bytecode = Luau::compile(resolvedRequire.sourceCode, copts());
+    // if (luau_load(ML, resolvedRequire.identifier.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    // {
+    //     if (codegen)
+    //     {
+    //         Luau::CodeGen::CompilationOptions nativeOptions;
+    //         Luau::CodeGen::compile(ML, -1, nativeOptions);
+    //     }
+
+    //     if (coverageActive())
+    //         coverageTrack(ML, -1);
+
+    //     int status = lua_resume(ML, L, 0);
+
+    //     if (status == 0)
+    //     {
+    //         if (lua_gettop(ML) == 0)
+    //             lua_pushstring(ML, "module must return a value");
+    //         else if (!lua_istable(ML, -1) && !lua_isfunction(ML, -1))
+    //             lua_pushstring(ML, "module must return a table or function");
+    //     }
+    //     else if (status == LUA_YIELD)
+    //     {
+    //         lua_pushstring(ML, "module can not yield");
+    //     }
+    //     else if (!lua_isstring(ML, -1))
+    //     {
+    //         lua_pushstring(ML, "unknown error while running module");
+    //     }
+    // }
+
+    // // there's now a return value on top of ML; L stack: _MODULES ML
+    // lua_xmove(ML, L, 1);
+    // lua_pushvalue(L, -1);
+    // lua_setfield(L, -4, resolvedRequire.absolutePath.c_str());
+
+    // // L stack: _MODULES ML result
+    // return finishrequire(L);
+
+	std::cout << "REQUIRE CALLED" << std::endl;
+
+	return 0;
+}
+
 void runLuau(const std::string& script) {
 	DEBUG_LOG("Creating Lua state...");
 	lua_State* L = luaL_newstate();
@@ -406,6 +487,7 @@ void runLuau(const std::string& script) {
 	DEBUG_LOG("Registering functions...");
 	static const luaL_Reg funcs[] = {
 		{"loadstring", lua_loadstring},
+		{"require", lua_require},
 		{"collectgarbage", lua_collectgarbage},
 		{NULL, NULL},
 	};
@@ -417,11 +499,11 @@ void runLuau(const std::string& script) {
 	DEBUG_LOG("Compiling script...");
 	std::string bytecode = Luau::compile(script, copts());
 
-	printf("BYTE CODE: ");
-	for (unsigned char c : bytecode) {
-		printf("%02X ", c);
-	}
-	printf("\n");
+	// printf("BYTE CODE: ");
+	// for (unsigned char c : bytecode) {
+	// 	printf("%02X ", c);
+	// }
+	// printf("\n");
 	
 	DEBUG_LOG("Loading bytecode...");
 	if (luau_load(L, "=script", bytecode.data(), bytecode.size(), 0) != 0) {
@@ -475,7 +557,8 @@ static int assertionHandler(const char* expr, const char* file, int line, const 
     return 1;
 }
 
-void analyzeLuau(const std::string& scriptFilePath) {
+// Returns true if analysis is successful, false otherwise
+bool analyzeLuau(const std::string& scriptFilePath) {
 
 	Luau::assertHandler() = assertionHandler;
 
@@ -544,6 +627,7 @@ void analyzeLuau(const std::string& scriptFilePath) {
             Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str()
         );
         // return 1;
+        return false;
     }
 
 	int failed = 0;
@@ -560,14 +644,16 @@ void analyzeLuau(const std::string& scriptFilePath) {
             fprintf(stderr, "%s: %s\n", pair.first.c_str(), pair.second.c_str());
     }
 
-    if (format == ReportFormat::Luacheck) {
-		// return 0;
-	} else {
-        // return failed ? 1 : 0;
-	}
+    // if (format == ReportFormat::Luacheck) {
+	// 	// return 0;
+	// } else {
+    //     // return failed ? 1 : 0;
+	// }
 
-	// std::cout << "DONE ANALYZING - FAILED: " << failed << std::endl;
-	std::cout << "DONE ANALYZING" << std::endl;
+    // std::cout << "DONE ANALYZING - FAILED: " << failed << std::endl;
+	// std::cout << "DONE ANALYZING" << std::endl;
+
+    return failed == 0;
 }
 
 int main(int argc, char* argv[]) {
@@ -605,7 +691,10 @@ int main(int argc, char* argv[]) {
 
 		if (scriptFilePath != "") {
 			DEBUG_LOG("Running analysis...");
-			analyzeLuau(scriptFilePath);
+			bool success = analyzeLuau(scriptFilePath);
+            if (success == false) {
+                return 1;
+            }
 		}
 		
 		DEBUG_LOG("Running script...");

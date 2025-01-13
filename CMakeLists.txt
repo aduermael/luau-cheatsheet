@@ -4,32 +4,32 @@ project(LuauProject)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Add Luau subdirectory
+# Add Luau subdirectory to build components
 add_subdirectory(luau)
 
-# Add executable
+# Add main executable target
 add_executable(main main.cpp)
 
-# Link against Luau libraries
-target_link_libraries(main PRIVATE 
-    Luau.Ast
-    Luau.Compiler
-    Luau.VM
-    Luau.Analysis
-    Luau.CodeGen
-    Luau.CLI.lib
-    isocline
+target_include_directories(main PRIVATE 
+    luau/Analysis/include
+    luau/Ast/include
+    luau/Compiler/include
+    luau/VM/include
+    luau/CodeGen/include
+    luau/Common/include
+    luau/EqSat/include
+    luau/CLI/include
+    luau/Config/include
 )
 
-# Include directories
-target_include_directories(main PRIVATE
-    ${CMAKE_SOURCE_DIR}/luau/Common/include
-    ${CMAKE_SOURCE_DIR}/luau/Ast/include
-    ${CMAKE_SOURCE_DIR}/luau/Compiler/include
-    ${CMAKE_SOURCE_DIR}/luau/VM/include
-    ${CMAKE_SOURCE_DIR}/luau/Analysis/include
-    ${CMAKE_SOURCE_DIR}/luau/CodeGen/include
-    ${CMAKE_SOURCE_DIR}/luau/CLI/include
-    ${CMAKE_SOURCE_DIR}/luau/CLI/src
-    ${CMAKE_SOURCE_DIR}/luau/extern/isocline/include
+# Link against individual Luau libraries in the correct order
+target_link_libraries(main PRIVATE 
+    Luau.CLI.lib
+    Luau.Analysis
+    Luau.CodeGen
+    Luau.Compiler
+    Luau.VM
+    Luau.Ast
+    Luau.EqSat
+    isocline
 )

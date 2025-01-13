@@ -7,28 +7,23 @@ i += 1 -- += operator
 
 print("i: " .. i)
 
--- i = "foo" -- analyze ERROR
--- print("i: " .. i)
+-- test type checking with error:
+-- local str: string = 100
+-- print(str)
 
--- type A = {x: number, y: number, z: number?}
--- type B = {x: number, y: number, z: number}
+-- test function
+-- function foo()
+--     return i + "coucou"
+-- end
 
--- local a1: A = {x = 1, y = 2}        -- ok
--- local b1: B = {x = 1, y = 2, z = 3} -- ok
 
--- local a2: A = b1 -- ok
--- local b2: B = a1 -- not ok
+type config = {
+    a: number,
+    b: string
+}
 
-local onlyString: string = 42
+function foo(config: config)
+    print(config.b)
+end
 
--- type TestType = { msg: string }
-
--- local tt: TestType = { msg = "foo"}
-
--- print(tt)
-
--- local tt2 = Instance.new("TestType")
-
--- print(tt2:IsA("TestType"))
-
-local x: string = 42  -- This should trigger a type error
+foo({a = 1, b = "coucou"})
