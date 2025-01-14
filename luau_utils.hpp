@@ -16,6 +16,10 @@
 #include "Luau/Config.h"
 #include "Luau/Frontend.h"
 #include "Luau/Linter.h"
+#include "Luau/Require.h"
+
+#include "lua.h"
+#include "lualib.h"
 
 namespace LuauUtils
 {
@@ -77,5 +81,40 @@ namespace LuauUtils
         std::condition_variable cv;
         std::vector<std::thread> workers;
         std::queue<std::function<void()>> tasks;
+    };
+
+    // Forward declarations
+    // struct lua_State;
+    // using RequireResolver = Luau::RequireResolver;
+
+    struct RuntimeRequireContext : public RequireResolver::RequireContext
+    {
+        explicit RuntimeRequireContext(std::string source);
+        std::string getPath() override;
+        bool isRequireAllowed() override;
+        bool isStdin() override;
+        std::string createNewIdentifer(const std::string& path) override;
+
+    private:
+        std::string source;
+    };
+
+    struct RuntimeCacheManager : public RequireResolver::CacheManager
+    {
+        explicit RuntimeCacheManager(lua_State* L);
+        bool isCached(const std::string& path) override;
+        std::string cacheKey;
+
+    private:
+        lua_State* L;
+    };
+
+    struct RuntimeErrorHandler : public RequireResolver::ErrorHandler
+    {
+        explicit RuntimeErrorHandler(lua_State* L);
+        void reportError(const std::string message) override;
+
+    private:
+        lua_State* L;
     };
 }

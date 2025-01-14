@@ -3,3 +3,4 @@ luau/
 build/
 main
 cli
+*.bytecode

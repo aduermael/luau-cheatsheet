@@ -16,7 +16,6 @@ print("i: " .. i)
 --     return i + "coucou"
 -- end
 
-
 type config = {
     a: number,
     b: string
@@ -27,3 +26,9 @@ function foo(config: config)
 end
 
 foo({a = 1, b = "coucou"})
+
+-- print("require:", require)
+local m = require("./module")
+-- local m = require("module")
+-- print(m)
+m.foo()

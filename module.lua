@@ -1,9 +1,9 @@
- mod = {}
+ local mod = {}
 
  mod.foo = function()
-    print("foo")
+    print("foo printed from module")
  end
 
- local s: string = 42
+ -- local s: string = 42
 
  return mod

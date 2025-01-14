@@ -51,6 +51,14 @@ static Luau::CompileOptions copts() {
 	return result;
 }
 
+static int finishrequire(lua_State* L)
+{
+    if (lua_isstring(L, -1))
+        lua_error(L);
+
+    return 1;
+}
+
 static int lua_loadstring(lua_State* L) {
 	size_t l = 0;
 	const char* s = luaL_checklstring(L, 1, &l);
@@ -86,29 +94,30 @@ static int lua_require(lua_State* L)
 {
     std::string name = luaL_checkstring(L, 1);
 
-    // RequireResolver::ResolvedRequire resolvedRequire;
-    // {
-    //     lua_Debug ar;
-    //     lua_getinfo(L, 1, "s", &ar);
+    RequireResolver::ResolvedRequire resolvedRequire;
+    {
+        lua_Debug ar;
+        lua_getinfo(L, 1, "s", &ar);
 
-    //     RuntimeRequireContext requireContext{ar.source};
-    //     RuntimeCacheManager cacheManager{L};
-    //     RuntimeErrorHandler errorHandler{L};
+        LuauUtils::RuntimeRequireContext requireContext{ar.source};
+        LuauUtils::RuntimeCacheManager cacheManager{L};
+        LuauUtils::RuntimeErrorHandler errorHandler{L};
 
-    //     RequireResolver resolver(std::move(name), requireContext, cacheManager, errorHandler);
+        RequireResolver resolver(std::move(name), requireContext, cacheManager, errorHandler);
 
-    //     resolvedRequire = resolver.resolveRequire(
-    //         [L, &cacheKey = cacheManager.cacheKey](const RequireResolver::ModuleStatus status)
-    //         {
-    //             lua_getfield(L, LUA_REGISTRYINDEX, "_MODULES");
-    //             if (status == RequireResolver::ModuleStatus::Cached)
-    //                 lua_getfield(L, -1, cacheKey.c_str());
-    //         }
-    //     );
-    // }
+        resolvedRequire = resolver.resolveRequire(
+            [L, &cacheKey = cacheManager.cacheKey](const RequireResolver::ModuleStatus status)
+            {
+                lua_getfield(L, LUA_REGISTRYINDEX, "_MODULES");
+                if (status == RequireResolver::ModuleStatus::Cached)
+                    lua_getfield(L, -1, cacheKey.c_str());
+            }
+        );
+    }
 
-    // if (resolvedRequire.status == RequireResolver::ModuleStatus::Cached)
-    //     return finishrequire(L);
+    if (resolvedRequire.status == RequireResolver::ModuleStatus::Cached) {
+        return finishrequire(L);
+    }
 
     // module needs to run in a new thread, isolated from the rest
     // note: we create ML on main thread so that it doesn't inherit environment of L
@@ -119,49 +128,45 @@ static int lua_require(lua_State* L)
     // new thread needs to have the globals sandboxed
     luaL_sandboxthread(ML);
 
-    // // now we can compile & run module on the new thread
-    // std::string bytecode = Luau::compile(resolvedRequire.sourceCode, copts());
-    // if (luau_load(ML, resolvedRequire.identifier.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
-    // {
-    //     if (codegen)
-    //     {
-    //         Luau::CodeGen::CompilationOptions nativeOptions;
-    //         Luau::CodeGen::compile(ML, -1, nativeOptions);
-    //     }
+    // now we can compile & run module on the new thread
+    std::string bytecode = Luau::compile(resolvedRequire.sourceCode, copts());
+    if (luau_load(ML, resolvedRequire.identifier.c_str(), bytecode.data(), bytecode.size(), 0) == 0)
+    {
+        // if (codegen)
+        // {
+        //     Luau::CodeGen::CompilationOptions nativeOptions;
+        //     Luau::CodeGen::compile(ML, -1, nativeOptions);
+        // }
 
-    //     if (coverageActive())
-    //         coverageTrack(ML, -1);
+        // if (coverageActive())
+        //     coverageTrack(ML, -1);
 
-    //     int status = lua_resume(ML, L, 0);
+        int status = lua_resume(ML, L, 0);
 
-    //     if (status == 0)
-    //     {
-    //         if (lua_gettop(ML) == 0)
-    //             lua_pushstring(ML, "module must return a value");
-    //         else if (!lua_istable(ML, -1) && !lua_isfunction(ML, -1))
-    //             lua_pushstring(ML, "module must return a table or function");
-    //     }
-    //     else if (status == LUA_YIELD)
-    //     {
-    //         lua_pushstring(ML, "module can not yield");
-    //     }
-    //     else if (!lua_isstring(ML, -1))
-    //     {
-    //         lua_pushstring(ML, "unknown error while running module");
-    //     }
-    // }
+        if (status == 0)
+        {
+            if (lua_gettop(ML) == 0)
+                lua_pushstring(ML, "module must return a value");
+            else if (!lua_istable(ML, -1) && !lua_isfunction(ML, -1))
+                lua_pushstring(ML, "module must return a table or function");
+        }
+        else if (status == LUA_YIELD)
+        {
+            lua_pushstring(ML, "module can not yield");
+        }
+        else if (!lua_isstring(ML, -1))
+        {
+            lua_pushstring(ML, "unknown error while running module");
+        }
+    }
 
-    // // there's now a return value on top of ML; L stack: _MODULES ML
-    // lua_xmove(ML, L, 1);
-    // lua_pushvalue(L, -1);
-    // lua_setfield(L, -4, resolvedRequire.absolutePath.c_str());
+    // there's now a return value on top of ML; L stack: _MODULES ML
+    lua_xmove(ML, L, 1);
+    lua_pushvalue(L, -1);
+    lua_setfield(L, -4, resolvedRequire.absolutePath.c_str());
 
     // // L stack: _MODULES ML result
-    // return finishrequire(L);
-
-	std::cout << "REQUIRE CALLED" << std::endl;
-
-	return 0;
+	return finishrequire(L);
 }
 
 void runLuau(const std::string& script) {
@@ -190,11 +195,19 @@ void runLuau(const std::string& script) {
 	DEBUG_LOG("Compiling script...");
 	std::string bytecode = Luau::compile(script, copts());
 
-	// printf("BYTE CODE: ");
+    // printf("BYTE CODE: ");
 	// for (unsigned char c : bytecode) {
 	// 	printf("%02X ", c);
 	// }
 	// printf("\n");
+
+	// std::ofstream bytecodeFile("last-run.bytecode", std::ios::binary);
+	// if (bytecodeFile.is_open()) {
+	// 	bytecodeFile.write(bytecode.data(), bytecode.size());
+	// 	bytecodeFile.close();
+	// } else {
+	// 	std::cerr << "Failed to open last-run.bytecode for writing" << std::endl;
+	// }
 	
 	DEBUG_LOG("Loading bytecode...");
 	if (luau_load(L, "=script", bytecode.data(), bytecode.size(), 0) != 0) {

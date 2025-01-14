@@ -4,6 +4,10 @@
 #include "Luau/ToString.h"
 #include "Luau/Transpiler.h"
 
+#include <iostream>
+
+
+
 namespace LuauUtils {
 
 void report(ReportFormat format, const char* name, const Luau::Location& loc, const char* type, const char* message)
@@ -69,8 +73,10 @@ bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName& name, 
         return false;
     }
 
-    for (auto& error : cr->errors)
+    for (Luau::TypeError& error : cr->errors) {
+        printf("ERROR: %d\n", error.code());
         reportError(frontend, format, error);
+    }
 
     std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(name);
     for (auto& error : cr->lintResult.errors)
@@ -273,6 +279,13 @@ std::optional<Luau::ModuleInfo> FileResolver::resolveModule(const Luau::ModuleIn
     {
         std::string path{expr->value.data, expr->value.size};
 
+        // here, we'll need to handle standard library modules,
+        // building path to where they are in the bundle. (platform specific)
+        if (path.find('/') == std::string::npos) {
+            path = "./" + path;
+        }
+        // std::cout << "RESOLVING MODULE: " << path << std::endl;
+
         AnalysisRequireContext requireContext{context->name};
         AnalysisCacheManager cacheManager;
         AnalysisErrorHandler errorHandler;
@@ -292,6 +305,59 @@ std::string FileResolver::getHumanReadableModuleName(const Luau::ModuleName& nam
     if (name == "-")
         return "stdin";
     return name;
+}
+
+
+RuntimeRequireContext::RuntimeRequireContext(std::string source)
+    : source(std::move(source))
+{
+}
+
+std::string RuntimeRequireContext::getPath()
+{
+    return source.substr(1);
+}
+
+bool RuntimeRequireContext::isRequireAllowed()
+{
+    return true;
+    // return isStdin() || (!source.empty() && source[0] == '@');
+}
+
+bool RuntimeRequireContext::isStdin()
+{
+    return source == "=stdin";
+}
+
+std::string RuntimeRequireContext::createNewIdentifer(const std::string& path)
+{
+    return "@" + path;
+}
+
+RuntimeCacheManager::RuntimeCacheManager(lua_State* L)
+    : L(L)
+{
+}
+
+bool RuntimeCacheManager::isCached(const std::string& path)
+{
+    luaL_findtable(L, LUA_REGISTRYINDEX, "_MODULES", 1);
+    lua_getfield(L, -1, path.c_str());
+    bool cached = !lua_isnil(L, -1);
+    lua_pop(L, 2);
+
+    if (cached)
+        cacheKey = path;
+
+    return cached;
+}
+
+RuntimeErrorHandler::RuntimeErrorHandler(lua_State* L)
+    : L(L) {}
+
+void RuntimeErrorHandler::reportError(const std::string message)
+{
+    luaL_errorL(L, "%s", message.c_str());
 }
 
 }
