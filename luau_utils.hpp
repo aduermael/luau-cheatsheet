@@ -5,6 +5,11 @@
 #include <unordered_map>
 #include <vector>
 #include <utility>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <functional>
 #include "Luau/FileResolver.h"
 #include "Luau/Ast.h"
 #include "Luau/FileUtils.h"
@@ -37,5 +42,25 @@ namespace LuauUtils
 
         Luau::Config defaultConfig;
         mutable std::unordered_map<std::string, Luau::Config> configCache;
+    };
+
+    class TaskScheduler
+    {
+    public:
+        explicit TaskScheduler(unsigned threadCount);
+        ~TaskScheduler();
+
+        std::function<void()> pop();
+        void push(std::function<void()> task);
+        static unsigned getThreadCount();
+
+    private:
+        void workerFunction();
+
+        unsigned threadCount = 1;
+        std::mutex mtx;
+        std::condition_variable cv;
+        std::vector<std::thread> workers;
+        std::queue<std::function<void()>> tasks;
     };
 }

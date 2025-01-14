@@ -3,6 +3,67 @@
 
 namespace LuauUtils {
 
+TaskScheduler::TaskScheduler(unsigned threadCount)
+    : threadCount(threadCount)
+{
+    for (unsigned i = 0; i < threadCount; i++)
+    {
+        workers.emplace_back(
+            [this]
+            {
+                workerFunction();
+            }
+        );
+    }
+}
+
+TaskScheduler::~TaskScheduler()
+{
+    for (unsigned i = 0; i < threadCount; i++)
+        push({});
+
+    for (std::thread& worker : workers)
+        worker.join();
+}
+
+std::function<void()> TaskScheduler::pop()
+{
+    std::unique_lock guard(mtx);
+
+    cv.wait(
+        guard,
+        [this]
+        {
+            return !tasks.empty();
+        }
+    );
+
+    std::function<void()> task = tasks.front();
+    tasks.pop();
+    return task;
+}
+
+void TaskScheduler::push(std::function<void()> task)
+{
+    {
+        std::unique_lock guard(mtx);
+        tasks.push(std::move(task));
+    }
+
+    cv.notify_one();
+}
+
+unsigned TaskScheduler::getThreadCount()
+{
+    return std::max(std::thread::hardware_concurrency(), 1u);
+}
+
+void TaskScheduler::workerFunction()
+{
+    while (std::function<void()> task = pop())
+        task();
+}
+
 ConfigResolver::ConfigResolver(Luau::Mode mode)
 {
     defaultConfig.mode = mode;

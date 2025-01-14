@@ -58,77 +58,6 @@ enum class ReportFormat
     Gnu,
 };
 
-struct TaskScheduler
-{
-    TaskScheduler(unsigned threadCount)
-        : threadCount(threadCount)
-    {
-        for (unsigned i = 0; i < threadCount; i++)
-        {
-            workers.emplace_back(
-                [this]
-                {
-                    workerFunction();
-                }
-            );
-        }
-    }
-
-    ~TaskScheduler()
-    {
-        for (unsigned i = 0; i < threadCount; i++)
-            push({});
-
-        for (std::thread& worker : workers)
-            worker.join();
-    }
-
-    std::function<void()> pop()
-    {
-        std::unique_lock guard(mtx);
-
-        cv.wait(
-            guard,
-            [this]
-            {
-                return !tasks.empty();
-            }
-        );
-
-        std::function<void()> task = tasks.front();
-        tasks.pop();
-        return task;
-    }
-
-    void push(std::function<void()> task)
-    {
-        {
-            std::unique_lock guard(mtx);
-            tasks.push(std::move(task));
-        }
-
-        cv.notify_one();
-    }
-
-    static unsigned getThreadCount()
-    {
-        return std::max(std::thread::hardware_concurrency(), 1u);
-    }
-
-private:
-    void workerFunction()
-    {
-        while (std::function<void()> task = pop())
-            task();
-    }
-
-    unsigned threadCount = 1;
-    std::mutex mtx;
-    std::condition_variable cv;
-    std::vector<std::thread> workers;
-    std::queue<std::function<void()>> tasks;
-};
-
 static int lua_loadstring(lua_State* L) {
 	size_t l = 0;
 	const char* s = luaL_checklstring(L, 1, &l);
@@ -415,43 +344,40 @@ static int assertionHandler(const char* expr, const char* file, int line, const 
 
 // Returns true if analysis is successful, false otherwise
 bool analyzeLuau(const std::string& scriptFilePath) {
+    Luau::assertHandler() = assertionHandler;
 
-	Luau::assertHandler() = assertionHandler;
-
-	ReportFormat format = ReportFormat::Default;
+    ReportFormat format = ReportFormat::Default;
     Luau::Mode mode = Luau::Mode::Strict;
     bool annotate = false;
     int threadCount = 0;
     std::string basePath = "";
 
-	Luau::FrontendOptions frontendOptions;
+    Luau::FrontendOptions frontendOptions;
     frontendOptions.retainFullTypeGraphs = annotate;
     frontendOptions.runLintChecks = true;
 
-	LuauUtils::FileResolver fileResolver;
+    LuauUtils::FileResolver fileResolver;
     LuauUtils::ConfigResolver configResolver(mode);
     Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
 
-	Luau::registerBuiltinGlobals(frontend, frontend.globals);
+    Luau::registerBuiltinGlobals(frontend, frontend.globals);
     Luau::freeze(frontend.globals.globalTypes);
 
-	std::vector<std::string> files = {
-		scriptFilePath,
-	};
+    std::vector<std::string> files = {
+        scriptFilePath,
+    };
 
-	for (const std::string& path : files)
+    for (const std::string& path : files)
         frontend.queueModuleCheck(path);
 
-	std::vector<Luau::ModuleName> checkedModules;
+    std::vector<Luau::ModuleName> checkedModules;
 
-		// If thread count is not set, try to use HW thread count, but with an upper limit
-    // When we improve scalability of typechecking, upper limit can be adjusted/removed
     if (threadCount <= 0)
-        threadCount = std::min(TaskScheduler::getThreadCount(), 8u);
+        threadCount = std::min(LuauUtils::TaskScheduler::getThreadCount(), 8u);
 
     try
     {
-        TaskScheduler scheduler(threadCount);
+        LuauUtils::TaskScheduler scheduler(threadCount);
 
         checkedModules = frontend.checkQueuedModules(
             std::nullopt,
