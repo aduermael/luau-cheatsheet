@@ -74,7 +74,7 @@ bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName& name, 
     }
 
     for (Luau::TypeError& error : cr->errors) {
-        printf("ERROR: %d\n", error.code());
+        // printf("ERROR: %d\n", error.code());
         reportError(frontend, format, error);
     }
 

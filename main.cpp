@@ -243,10 +243,11 @@ void runLuau(const std::string& script) {
 			error = str;
 		}
 
-		error += "\nstack backtrace:\n";
+		// error += "\nstack backtrace:\n";
+        error += "\n";
 		error += lua_debugtrace(T);
 
-		std::cout << "ERROR: " << error << std::endl;
+		std::cout << "❌ " << error << std::endl;
 		lua_pop(L, 1);
 	}
 
@@ -339,42 +340,47 @@ bool analyzeLuau(const std::string& scriptFilePath) {
 int main(int argc, char* argv[]) {
 	std::string script;
 	std::string scriptFilePath = "";
+	bool runAnalyzer = true;
 
 	if (argc < 2) {
-		std::cout << "Usage: " << argv[0] << " <script_string> or " << argv[0] << " -f <script_file>" << std::endl;
+		std::cout << "Usage: " << argv[0] << " <script_string> or " << argv[0] << " -f <script_file> [--analyzer=0|1]" << std::endl;
 		return 1;
 	}
 
 	try {
-		if (std::string(argv[1]) == "-f") {
-			if (argc < 3) {
-				std::cout << "Error: No file specified after -f flag" << std::endl;
-				return 1;
+		// Parse command line arguments
+		for (int i = 1; i < argc; i++) {
+			std::string arg = argv[i];
+			if (arg.substr(0, 11) == "--analyzer=") {
+				runAnalyzer = (arg.substr(11) == "1");
+			} else if (arg == "-f") {
+				if (i + 1 >= argc) {
+					std::cout << "Error: No file specified after -f flag" << std::endl;
+					return 1;
+				}
+				scriptFilePath = argv[++i];
+
+				DEBUG_LOG("Reading file: " << scriptFilePath);
+				std::ifstream file(scriptFilePath);
+				if (!file.is_open()) {
+					std::cout << "Error: Could not open file " << scriptFilePath << std::endl;
+					return 1;
+				}
+
+				std::stringstream buffer;
+				buffer << file.rdbuf();
+				script = buffer.str();
+			} else if (script.empty()) {
+				script = arg;
 			}
-
-			scriptFilePath = argv[2];
-
-			DEBUG_LOG("Reading file: " << argv[2]);
-			std::ifstream file(argv[2]);
-			if (!file.is_open()) {
-				std::cout << "Error: Could not open file " << argv[2] << std::endl;
-				return 1;
-			}
-
-			std::stringstream buffer;
-			buffer << file.rdbuf();
-			script = buffer.str();
-
-		} else {
-			script = argv[1];
 		}
 
-		if (scriptFilePath != "") {
+		if (scriptFilePath != "" && runAnalyzer) {
 			DEBUG_LOG("Running analysis...");
 			bool success = analyzeLuau(scriptFilePath);
-            if (success == false) {
-                return 1;
-            }
+			if (success == false) {
+				return 1;
+			}
 		}
 		
 		DEBUG_LOG("Running script...");
