@@ -51,13 +51,6 @@ static Luau::CompileOptions copts() {
 	return result;
 }
 
-enum class ReportFormat
-{
-    Default,
-    Luacheck,
-    Gnu,
-};
-
 static int lua_loadstring(lua_State* L) {
 	size_t l = 0;
 	const char* s = luaL_checklstring(L, 1, &l);
@@ -87,93 +80,6 @@ static int lua_collectgarbage(lua_State* L) {
 		return 1;
 	}
 	luaL_error(L, "collectgarbage must be called with 'count' or 'collect'");
-}
-
-static void report(ReportFormat format, const char* name, const Luau::Location& loc, const char* type, const char* message)
-{
-    switch (format)
-    {
-    case ReportFormat::Default:
-        fprintf(stderr, "%s(%d,%d): %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, type, message);
-        break;
-
-    case ReportFormat::Luacheck:
-    {
-        // Note: luacheck's end column is inclusive but our end column is exclusive
-        // In addition, luacheck doesn't support multi-line messages, so if the error is multiline we'll fake end column as 100 and hope for the best
-        int columnEnd = (loc.begin.line == loc.end.line) ? loc.end.column : 100;
-
-        // Use stdout to match luacheck behavior
-        fprintf(stdout, "%s:%d:%d-%d: (W0) %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, columnEnd, type, message);
-        break;
-    }
-
-    case ReportFormat::Gnu:
-        // Note: GNU end column is inclusive but our end column is exclusive
-        fprintf(stderr, "%s:%d.%d-%d.%d: %s: %s\n", name, loc.begin.line + 1, loc.begin.column + 1, loc.end.line + 1, loc.end.column, type, message);
-        break;
-    }
-}
-
-static void reportError(const Luau::Frontend& frontend, ReportFormat format, const Luau::TypeError& error)
-{
-    std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(error.moduleName);
-
-    if (const Luau::SyntaxError* syntaxError = Luau::get_if<Luau::SyntaxError>(&error.data))
-        report(format, humanReadableName.c_str(), error.location, "SyntaxError", syntaxError->message.c_str());
-    else
-        report(
-            format,
-            humanReadableName.c_str(),
-            error.location,
-            "TypeError",
-            Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str()
-        );
-}
-
-static void reportWarning(ReportFormat format, const char* name, const Luau::LintWarning& warning)
-{
-    report(format, name, warning.location, Luau::LintWarning::getName(warning.code), warning.text.c_str());
-}
-
-static bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName& name, ReportFormat format, bool annotate)
-{
-    std::optional<Luau::CheckResult> cr = frontend.getCheckResult(name, false);
-
-    if (!cr)
-    {
-        fprintf(stderr, "Failed to find result for %s\n", name.c_str());
-        return false;
-    }
-
-    if (!frontend.getSourceModule(name))
-    {
-        fprintf(stderr, "Error opening %s\n", name.c_str());
-        return false;
-    }
-
-    for (auto& error : cr->errors)
-        reportError(frontend, format, error);
-
-    std::string humanReadableName = frontend.fileResolver->getHumanReadableModuleName(name);
-    for (auto& error : cr->lintResult.errors)
-        reportWarning(format, humanReadableName.c_str(), error);
-    for (auto& warning : cr->lintResult.warnings)
-        reportWarning(format, humanReadableName.c_str(), warning);
-
-    if (annotate)
-    {
-        Luau::SourceModule* sm = frontend.getSourceModule(name);
-        Luau::ModulePtr m = frontend.moduleResolver.getModule(name);
-
-        Luau::attachTypeData(*sm, *m);
-
-        std::string annotated = Luau::transpileWithTypes(*sm->root);
-
-        printf("%s", annotated.c_str());
-    }
-
-    return cr->errors.empty() && cr->lintResult.errors.empty();
 }
 
 static int lua_require(lua_State* L)
@@ -335,18 +241,10 @@ void runLuau(const std::string& script) {
 	lua_close(L);
 }
 
-static int assertionHandler(const char* expr, const char* file, int line, const char* function)
-{
-    printf("%s(%d): ASSERTION FAILED: %s\n", file, line, expr);
-    fflush(stdout);
-    return 1;
-}
-
-// Returns true if analysis is successful, false otherwise
 bool analyzeLuau(const std::string& scriptFilePath) {
-    Luau::assertHandler() = assertionHandler;
+    Luau::assertHandler() = LuauUtils::assertionHandler;
 
-    ReportFormat format = ReportFormat::Default;
+    LuauUtils::ReportFormat format = LuauUtils::ReportFormat::Default;
     Luau::Mode mode = Luau::Mode::Strict;
     bool annotate = false;
     int threadCount = 0;
@@ -396,23 +294,14 @@ bool analyzeLuau(const std::string& scriptFilePath) {
 
         Luau::TypeError error(location, moduleName, Luau::InternalError{ice.message});
 
-		std::cout << "ERROR" << std::endl;
-        report(
-            format,
-            humanReadableName.c_str(),
-            location,
-            "InternalCompilerError",
-            Luau::toString(error, Luau::TypeErrorToStringOptions{frontend.fileResolver}).c_str()
-        );
-        // return 1;
+        LuauUtils::reportError(frontend, format, error);
         return false;
     }
 
-	int failed = 0;
+    int failed = 0;
 
-    for (const Luau::ModuleName& name : checkedModules) {
-        failed += !reportModuleResult(frontend, name, format, annotate);
-	}
+    for (const Luau::ModuleName& name : checkedModules)
+        failed += !LuauUtils::reportModuleResult(frontend, name, format, annotate);
 
     if (!configResolver.configErrors.empty())
     {

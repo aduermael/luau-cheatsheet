@@ -14,9 +14,24 @@
 #include "Luau/Ast.h"
 #include "Luau/FileUtils.h"
 #include "Luau/Config.h"
+#include "Luau/Frontend.h"
+#include "Luau/Linter.h"
 
 namespace LuauUtils
 {
+    enum class ReportFormat
+    {
+        Default,
+        Luacheck,
+        Gnu,
+    };
+
+    void report(ReportFormat format, const char* name, const Luau::Location& loc, const char* type, const char* message);
+    void reportError(const Luau::Frontend& frontend, ReportFormat format, const Luau::TypeError& error);
+    void reportWarning(ReportFormat format, const char* name, const Luau::LintWarning& warning);
+    bool reportModuleResult(Luau::Frontend& frontend, const Luau::ModuleName& name, ReportFormat format, bool annotate);
+    int assertionHandler(const char* expr, const char* file, int line, const char* function);
+
     class FileResolver : public Luau::FileResolver
     {
     public:
