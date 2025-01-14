@@ -28,6 +28,7 @@
 #include "Luau/Require.h"
 #include "Luau/TypeAttach.h"
 #include "Luau/Transpiler.h"
+#include "luau_utils.hpp"
 
 #ifndef DEBUG
 #define DEBUG 0
@@ -55,101 +56,6 @@ enum class ReportFormat
     Default,
     Luacheck,
     Gnu,
-};
-
-struct CliFileResolver : Luau::FileResolver
-{
-    std::optional<Luau::SourceCode> readSource(const Luau::ModuleName& name) override
-    {
-        Luau::SourceCode::Type sourceType;
-        std::optional<std::string> source = std::nullopt;
-
-        // If the module name is "-", then read source from stdin
-        if (name == "-")
-        {
-            source = readStdin();
-            sourceType = Luau::SourceCode::Script;
-        }
-        else
-        {
-            source = readFile(name);
-            sourceType = Luau::SourceCode::Module;
-        }
-
-        if (!source)
-            return std::nullopt;
-
-        return Luau::SourceCode{*source, sourceType};
-    }
-
-    std::optional<Luau::ModuleInfo> resolveModule(const Luau::ModuleInfo* context, Luau::AstExpr* node) override
-    {
-        if (Luau::AstExprConstantString* expr = node->as<Luau::AstExprConstantString>())
-        {
-            std::string path{expr->value.data, expr->value.size};
-
-            AnalysisRequireContext requireContext{context->name};
-            AnalysisCacheManager cacheManager;
-            AnalysisErrorHandler errorHandler;
-
-            RequireResolver resolver(path, requireContext, cacheManager, errorHandler);
-            RequireResolver::ResolvedRequire resolvedRequire = resolver.resolveRequire();
-
-            if (resolvedRequire.status == RequireResolver::ModuleStatus::FileRead)
-                return {{resolvedRequire.identifier}};
-        }
-
-        return std::nullopt;
-    }
-
-    std::string getHumanReadableModuleName(const Luau::ModuleName& name) const override
-    {
-        if (name == "-")
-            return "stdin";
-        return name;
-    }
-
-private:
-    struct AnalysisRequireContext : RequireResolver::RequireContext
-    {
-        explicit AnalysisRequireContext(std::string path)
-            : path(std::move(path))
-        {
-        }
-
-        std::string getPath() override
-        {
-            return path;
-        }
-
-        bool isRequireAllowed() override
-        {
-            return true;
-        }
-
-        bool isStdin() override
-        {
-            return path == "-";
-        }
-
-        std::string createNewIdentifer(const std::string& path) override
-        {
-            return path;
-        }
-
-    private:
-        std::string path;
-    };
-
-    struct AnalysisCacheManager : public RequireResolver::CacheManager
-    {
-        AnalysisCacheManager() = default;
-    };
-
-    struct AnalysisErrorHandler : RequireResolver::ErrorHandler
-    {
-        AnalysisErrorHandler() = default;
-    };
 };
 
 struct CliConfigResolver : Luau::ConfigResolver
@@ -562,21 +468,17 @@ bool analyzeLuau(const std::string& scriptFilePath) {
 
 	Luau::assertHandler() = assertionHandler;
 
-    // setLuauFlagsDefault();
-
 	ReportFormat format = ReportFormat::Default;
     Luau::Mode mode = Luau::Mode::Strict;
     bool annotate = false;
     int threadCount = 0;
     std::string basePath = "";
 
-	// TODO: expose options in parameters
-
 	Luau::FrontendOptions frontendOptions;
     frontendOptions.retainFullTypeGraphs = annotate;
     frontendOptions.runLintChecks = true;
 
-	CliFileResolver fileResolver;
+	LuauUtils::FileResolver fileResolver;
     CliConfigResolver configResolver(mode);
     Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
 

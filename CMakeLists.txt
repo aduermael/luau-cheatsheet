@@ -7,8 +7,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Add Luau subdirectory to build components
 add_subdirectory(luau)
 
-# Add main executable target
-add_executable(main main.cpp)
+# Find all source files in current directory
+file(GLOB PROJECT_SOURCES 
+    "*.cpp"
+    "*.hpp"
+)
+
+# Add main executable target with all source files
+add_executable(main ${PROJECT_SOURCES})
 
 target_include_directories(main PRIVATE 
     luau/Analysis/include
