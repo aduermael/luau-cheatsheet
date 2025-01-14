@@ -3,6 +3,48 @@
 
 namespace LuauUtils {
 
+ConfigResolver::ConfigResolver(Luau::Mode mode)
+{
+    defaultConfig.mode = mode;
+}
+
+const Luau::Config& ConfigResolver::getConfig(const Luau::ModuleName& name) const
+{
+    std::optional<std::string> path = getParentPath(name);
+    if (!path)
+        return defaultConfig;
+
+    return readConfigRec(*path);
+}
+
+const Luau::Config& ConfigResolver::readConfigRec(const std::string& path) const
+{
+    auto it = configCache.find(path);
+    if (it != configCache.end())
+        return it->second;
+
+    std::optional<std::string> parent = getParentPath(path);
+    Luau::Config result = parent ? readConfigRec(*parent) : defaultConfig;
+
+    std::string configPath = joinPaths(path, Luau::kConfigName);
+
+    if (std::optional<std::string> contents = readFile(configPath))
+    {
+        Luau::ConfigOptions::AliasOptions aliasOpts;
+        aliasOpts.configLocation = configPath;
+        aliasOpts.overwriteAliases = true;
+
+        Luau::ConfigOptions opts;
+        opts.aliasOptions = std::move(aliasOpts);
+
+        std::optional<std::string> error = Luau::parseConfig(*contents, result, opts);
+        if (error)
+            configErrors.push_back({configPath, *error});
+    }
+
+    return configCache[path] = result;
+}
+
 struct FileResolver::AnalysisRequireContext : RequireResolver::RequireContext
 {
     explicit AnalysisRequireContext(std::string path)

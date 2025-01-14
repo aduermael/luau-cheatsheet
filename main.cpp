@@ -58,56 +58,6 @@ enum class ReportFormat
     Gnu,
 };
 
-struct CliConfigResolver : Luau::ConfigResolver
-{
-    Luau::Config defaultConfig;
-
-    mutable std::unordered_map<std::string, Luau::Config> configCache;
-    mutable std::vector<std::pair<std::string, std::string>> configErrors;
-
-    CliConfigResolver(Luau::Mode mode)
-    {
-        defaultConfig.mode = mode;
-    }
-
-    const Luau::Config& getConfig(const Luau::ModuleName& name) const override
-    {
-        std::optional<std::string> path = getParentPath(name);
-        if (!path)
-            return defaultConfig;
-
-        return readConfigRec(*path);
-    }
-
-    const Luau::Config& readConfigRec(const std::string& path) const
-    {
-        auto it = configCache.find(path);
-        if (it != configCache.end())
-            return it->second;
-
-        std::optional<std::string> parent = getParentPath(path);
-        Luau::Config result = parent ? readConfigRec(*parent) : defaultConfig;
-
-        std::string configPath = joinPaths(path, Luau::kConfigName);
-
-        if (std::optional<std::string> contents = readFile(configPath))
-        {
-            Luau::ConfigOptions::AliasOptions aliasOpts;
-            aliasOpts.configLocation = configPath;
-            aliasOpts.overwriteAliases = true;
-
-            Luau::ConfigOptions opts;
-            opts.aliasOptions = std::move(aliasOpts);
-
-            std::optional<std::string> error = Luau::parseConfig(*contents, result, opts);
-            if (error)
-                configErrors.push_back({configPath, *error});
-        }
-
-        return configCache[path] = result;
-    }
-};
-
 struct TaskScheduler
 {
     TaskScheduler(unsigned threadCount)
@@ -479,7 +429,7 @@ bool analyzeLuau(const std::string& scriptFilePath) {
     frontendOptions.runLintChecks = true;
 
 	LuauUtils::FileResolver fileResolver;
-    CliConfigResolver configResolver(mode);
+    LuauUtils::ConfigResolver configResolver(mode);
     Luau::Frontend frontend(&fileResolver, &configResolver, frontendOptions);
 
 	Luau::registerBuiltinGlobals(frontend, frontend.globals);
